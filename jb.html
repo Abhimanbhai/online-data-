@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bulk Bill Data Export</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body{font-family:Arial;background:#f2f2f2;margin:0;padding:0}
+.box{background:#fff;padding:20px;border-radius:10px;max-width:900px;margin:20px auto}
+textarea,input,button{width:100%;padding:12px;margin:8px 0;font-size:16px}
+textarea{height:140px}
+button{background:#000;color:#fff;border:none;border-radius:6px;cursor:pointer}
+.bulk-btn{background:#007bff}
+.export-btn{background:#28a745}
+.progress-bar{height:18px;background:#007bff;width:0%;color:#fff;text-align:center}
+.result-box{white-space:pre-wrap;display:none;margin-top:10px}
+
+/* TOP BAR */
+#topBar{
+  position:fixed;top:0;left:0;right:0;
+  background:#000;color:#0f0;
+  padding:10px 15px;
+  display:flex;justify-content:flex-end;
+  z-index:999;
+}#menuBtn{
+  position:fixed;
+  top:10px;
+  left:5px;
+  z-index:1001;
+  background:#000;
+  color:#0f0;
+  border:none;
+  padding:5px 8px;
+  cursor:pointer;
+  border-radius:4px;
+  font-size:14px;
+  width:auto;
+}
+
+#sideMenu{
+  position:fixed;left:-360px;top:0;
+  width:250px;height:100%;
+  background:#111;color:#0f0;
+  padding:5px;transition:.3s;
+  z-index:1001;
+}
+#sideMenu button{margin:10px 0}
+.content{padding-top:60px}
+.history{background:#111;color:#0f0;padding:10px;font-size:13px;max-height:200px;overflow:auto}
+</style>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+
+<body>
+
+<button id="menuBtn" onclick="toggleMenu()">☰</button>
+
+<div id="topBar">
+  Wallet ₹ <span id="walletAmount">0</span>
+</div>
+
+<div id="sideMenu">
+<h3>Menu</h3>
+<button onclick="showPasswordChange()">Change Password</button>
+<a href="https://t.me/babajisupport" target="_blank"><button>Contact</button></a>
+<button onclick="toggleMenu()" style="color:red">Close</button>
+</div>
+
+<div class="content">
+
+<!-- LOGIN -->
+<div id="loginBox" class="box">
+<h2>Login</h2>
+<input type="password" id="loginPass" placeholder="Password">
+<button onclick="doLogin()">Login</button>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none">
+
+<div class="box">
+<h2>Admin Baba Kismat 2.0</h2>
+
+<h3>Single Search</h3>
+<input id="consumer" placeholder="Enter Consumer ID">
+<button onclick="fetchSingle()">Search</button>
+<div id="singleResult" class="result-box"></div>
+
+<h3>Bulk Search</h3>
+<textarea id="bulkConsumers" placeholder="DV006/3751PUN/502"></textarea>
+
+<button class="bulk-btn" onclick="startBulk()">Process Bulk</button>
+<button onclick="autoFillConsumers()">Autofill</button>
+<button class="export-btn" onclick="exportExcel()" id="exportBtn" style="display:none">Export Excel</button>
+
+<div style="background:#eee">
+  <div id="progressBar" class="progress-bar">0%</div>
+</div>
+
+<div id="bulkResult" class="result-box"></div>
+
+<h3>Wallet History</h3>
+<div class="history" id="walletHistory"></div>
+</div>
+
+</div>
+</div>
+
+<script>
+// ================= FIREBASE =================
+firebase.initializeApp({
+ apiKey:"AIzaSyD7kr-x5CJLdWGoj6r_MAPmhnJWe8Jc3oI",
+ authDomain:"ss22-a96d3.firebaseapp.com",
+ projectId:"ss22-a96d3"
+});
+const db=firebase.firestore();
+
+// ================= LOGIN =================
+const loginId="login-passwordjbl";
+function doLogin(){
+ const p=loginPass.value;
+ if(!p) return alert("Enter password");
+ db.collection("logins").doc(loginId).get().then(d=>{
+  if(!d.exists){
+   db.collection("logins").doc(loginId).set({password:"1234"});
+   if(p==="1234") initApp(); else alert("Wrong password");
+  }else{
+   if(d.data().password===p) initApp();
+   else alert("Wrong password");
+  }
+ });
+}
+function initApp(){
+ loginBox.style.display="none";
+ app.style.display="block";
+ listenWallet();
+ loadHistory();
+}
+
+// ================= WALLET =================
+const userId="walletjb01";
+let walletReady=false;
+
+function listenWallet(){
+ const ref=db.collection("wallets").doc(userId);
+ ref.onSnapshot(d=>{
+  if(!d.exists) ref.set({balance:0});
+  walletAmount.innerText=d.data()?.balance||0;
+  walletReady=true;
+ });
+}
+
+function deductWallet(amount,reason,bp){
+ const ref=db.collection("wallets").doc(userId);
+ ref.get().then(d=>{
+  let bal=d.data()?.balance||0;
+  if(bal<amount) return;
+  ref.set({balance:bal-amount});
+  ref.collection("history").add({
+   type:"deduct",amount,reason,bp,time:Date.now()
+  });
+ });
+}
+
+function loadHistory(){
+ db.collection("wallets").doc(userId).collection("history")
+ .orderBy("time","desc").limit(20)
+ .onSnapshot(s=>{
+  let out="";
+  s.forEach(d=>{
+   let x=d.data();
+   out+=`${x.type} ₹${x.amount} ${x.bp||""}\n`;
+  });
+  walletHistory.innerText=out||"No history";
+ });
+}
+
+// ================= SINGLE =================
+function fetchSingle(){
+ if(!walletReady) return alert("Wallet loading");
+ if(walletAmount.innerText<1) return alert("Low balance");
+
+ deductWallet(1,"Single Search",consumer.value);
+ singleResult.style.display="block";
+ singleResult.innerText="Loading...";
+
+ fetch(`https://heybro-bill-search.profilework239.workers.dev/search?bill=${consumer.value}`)
+ .then(r=>r.json())
+ .then(d=>singleResult.innerText=JSON.stringify(d.Model||d,null,2))
+ .catch(()=>singleResult.innerText="API Error");
+}
+
+// ================= BULK =================
+let bulkData=[],done=0,total=0;
+function startBulk(){
+ const list=bulkConsumers.value.split("\n").map(x=>x.trim()).filter(x=>x);
+ if(!list.length) return alert("Enter list");
+ bulkData=[];done=0;total=list.length;
+ exportBtn.style.display="none";
+ progressBar.style.width="0%";progressBar.innerText="0%";
+ next(list,0);
+}
+
+function next(list,i){
+ if(i>=list.length){
+  exportBtn.style.display="block";
+  return;
+ }
+ if(walletAmount.innerText<1){
+  bulkResult.innerText+="Low balance skipped\n";
+  done++;update();next(list,i+1);return;
+ }
+ deductWallet(1,"Bulk Search",list[i]);
+ fetch(`https://heybro-bill-search.profilework239.workers.dev/search?bill=${list[i]}`)
+ .then(r=>r.json())
+ .then(d=>{
+  let m=d.Model||{};
+  bulkData.push({
+   ConsId:m.ConsId||list[i],
+   NameComp:m.NameComp||"",
+   MobileNo:m.MobileNo||"",
+   EmailId:m.EmailId||""
+  });
+  bulkResult.innerText=JSON.stringify(bulkData.at(-1),null,2);
+ })
+ .finally(()=>{
+  done++;update();setTimeout(()=>next(list,i+1),300);
+ });
+}
+
+function update(){
+ let p=Math.round(done/total*100);
+ progressBar.style.width=p+"%";
+ progressBar.innerText=p+"%";
+}
+
+// ================= EXCEL =================
+function exportExcel(){
+ const ws=XLSX.utils.json_to_sheet(bulkData);
+ const wb=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(wb,ws,"Result");
+ XLSX.writeFile(wb,"Bill_Data.xlsx");
+}
+
+// ================= AUTOFILL =================
+function autoFillConsumers(){
+ let lines=bulkConsumers.value.trim().split("\n").filter(Boolean);
+ if(!lines.length) return alert("Enter first ID");
+ let last=lines.at(-1);
+ let p=last.split("/");
+ if(p.length<3) return alert("Invalid format");
+
+ let mid=p[1];
+ let n=mid.match(/^(\d+)/);
+ if(!n) return alert("No number");
+
+ let num=parseInt(n[1]);
+ let code=mid.replace(n[1],"");
+ let qty=parseInt(prompt("Kitne add kare?"));
+ if(!qty) return;
+
+ let out=[];
+ for(let i=1;i<=qty;i++){
+  out.push(p[0]+"/"+(num+i)+code+"/"+p.slice(2).join("/"));
+ }
+ bulkConsumers.value+="\n"+out.join("\n");
+}
+
+// ================= MENU =================
+function toggleMenu(){
+ sideMenu.style.left=sideMenu.style.left==="0px"?"-260px":"0px";
+}
+function showPasswordChange(){
+ let np=prompt("New password:");
+ if(np) db.collection("logins").doc(loginId).set({password:np});
+}
+</script>
+
+</body>
+</html>
