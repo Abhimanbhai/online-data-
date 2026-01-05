@@ -14,6 +14,7 @@ button:hover{background:#333}
 .bad{color:red;font-weight:bold}
 .good{color:green;font-weight:bold}
 .small{font-size:12px;color:#555}
+.pass{color:#b30000;font-weight:bold;font-size:13px}
 .danger{background:#b30000;margin-top:6px}
 </style>
 
@@ -32,11 +33,6 @@ button:hover{background:#333}
 <!-- PANEL -->
 <div id="app" class="box" style="display:none">
 <h2>Admin Wallet Control Panel</h2>
-
-<h3>🔐 User Login Password</h3>
-<input id="currentUserPass" readonly style="background:#eee">
-
-<hr>
 
 <h3>💰 Recharge / Deduct</h3>
 <input id="userIdInput" placeholder="Wallet ID">
@@ -69,21 +65,21 @@ const db=firebase.firestore();
 const ADMIN_PASSWORD="admin123";
 const DELETE_PASSWORD="4542";
 const loginId="login-passwordmngl";
+let USER_LOGIN_PASSWORD="1234";
 
 function doLogin(){
  if(loginPass.value!==ADMIN_PASSWORD) return alert("Wrong password");
  loginBox.style.display="none";
  app.style.display="block";
- loadUserPassword();
+ loadLoginPassword();
  loadUsers();
  loadHistory();
 }
 
-// ================= USER PASSWORD =================
-function loadUserPassword(){
- db.collection("logins").doc(loginId).onSnapshot(d=>{
-  currentUserPass.value=d.exists?d.data().password:"1234";
- });
+// ===== LOAD USER LOGIN PASSWORD =====
+async function loadLoginPassword(){
+ const d=await db.collection("logins").doc(loginId).get();
+ USER_LOGIN_PASSWORD = d.exists ? d.data().password : "1234";
 }
 
 // ================= WALLET UPDATE =================
@@ -114,70 +110,54 @@ async function walletUpdate(type){
 
  alert("Done");
  userIdInput.value=amountInput.value=reasonInput.value="";
+ loadUsers();
 }
 
 // ================= USERS LIST =================
 async function loadUsers(){
  const wallets=await db.collection("wallets").get();
- const users=await db.collection("users").get();
-
- const map={};
- users.forEach(d=>map[d.data().walletId]={...d.data(),uid:d.id});
-
  let out="";
+
  wallets.forEach(d=>{
   const w=d.data();
-  const u=map[d.id]||{};
-  let created="N/A";
-
-  if(u.createdAt){
-   if(u.createdAt.seconds){
-    created=new Date(u.createdAt.seconds*1000).toLocaleString();
-   }else{
-    created=new Date(u.createdAt).toLocaleString();
-   }
-  }
+  const isOff = w.active === false;
 
   out+=`
   <div class="userRow">
-   <b>${u.name||"Unknown User"}</b>
-   <div class="small">Wallet: ${d.id}</div>
-   <div class="small">Created: ${created}</div>
-   <div class="small">UserID: ${u.userid||"-"}</div>
-   <br>
-   Balance: ₹${w.active===false?0:(w.balance||0)}<br>
-   Status: <span class="${w.active===false?'bad':'good'}">
-    ${w.active===false?'OFF':'ON'}
+   <b>Wallet ID:</b> ${d.id}<br>
+   Balance: ₹${w.balance||0}<br>
+   Status:
+   <span class="${isOff?'bad':'good'}">
+    ${isOff?'OFF':'ON'}
    </span>
-   <button onclick="toggleUser('${d.id}',${w.active===false})">
-    ${w.active===false?'Enable':'Disable'}
+   ${isOff ? `<div class="pass">Login Password: ${USER_LOGIN_PASSWORD}</div>` : ``}
+   <button onclick="toggleUser('${d.id}',${isOff})">
+    ${isOff?'Enable':'Disable'}
    </button>
-   <button class="danger" onclick="deleteUser('${d.id}','${u.uid||""}')">
+   <button class="danger" onclick="deleteUser('${d.id}')">
     🗑️ Delete User
    </button>
   </div>`;
  });
+
  usersList.innerHTML=out||"No users";
 }
 
 // ================= TOGGLE =================
 function toggleUser(id,state){
  db.collection("wallets").doc(id).set({active:state},{merge:true});
+ loadUsers();
 }
 
-// ================= DELETE USER =================
-async function deleteUser(walletId,userDocId){
+// ================= DELETE =================
+async function deleteUser(walletId){
  const pass=prompt("Enter delete password");
  if(pass!==DELETE_PASSWORD) return alert("Wrong password");
+ if(!confirm("Delete permanently?")) return;
 
- if(!confirm("This will DELETE user & wallet permanently")) return;
-
- // delete wallet history
  const h=await db.collection("wallets").doc(walletId).collection("history").get();
  h.forEach(x=>x.ref.delete());
-
  await db.collection("wallets").doc(walletId).delete();
- if(userDocId) await db.collection("users").doc(userDocId).delete();
 
  alert("User deleted");
  loadUsers();
